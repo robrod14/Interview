@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+strawberry-graphql
+httpx
+requests
+sse-starlette
