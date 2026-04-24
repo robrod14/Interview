@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from fastapi.security import OAuth2PasswordRequestForm
-from typing import Optional
+from pydantic import BaseModel
+from typing import Any, Dict, Optional
+import hashlib
 
 from .. import database, models, auth, schemas, vulns
 
@@ -180,3 +182,194 @@ async def login_for_access_token(
         detail="Incorrect username or password",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+@router.put("/me")
+async def update_profile(
+    updates: Dict[str, Any],
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+    x_candidate_id: Optional[str] = Header(None, alias="X-Candidate-ID")
+):
+    """
+    Update the current user's profile.
+    Accepts a JSON body with fields to update.
+    
+    Intended fields: username, password
+    
+    VULNERABILITY: Mass Assignment
+    The endpoint blindly applies all provided fields to the user model,
+    including sensitive fields like 'role', 'tenant_id', and 'api_key'.
+    A crafty tester can send {"role": "admin"} to escalate privileges.
+    """
+    PROTECTED_FIELDS = {"id", "hashed_password"}  # Only truly immutable fields
+    
+    # VULNERABLE: Detect if the user is trying to escalate role
+    if "role" in updates:
+        if x_candidate_id:
+            await vulns.award_points(x_candidate_id, "mass-assignment-role", db)
+    
+    # VULNERABLE: Blindly apply all incoming fields to the user object
+    for field, value in updates.items():
+        if field in PROTECTED_FIELDS:
+            continue  # Can't overwrite ID or hashed_password directly
+        if field == "password":
+            # Hash the new password properly
+            current_user.hashed_password = auth.get_password_hash(value)
+        elif hasattr(current_user, field):
+            # 🚨 MASS ASSIGNMENT: setting role, tenant_id, api_key – whatever they send!
+            setattr(current_user, field, value)
+    
+    db.commit()
+    db.refresh(current_user)
+    
+    return {
+        "message": "Profile updated successfully.",
+        "username": current_user.username,
+        "role": current_user.role,
+        "tenant_id": current_user.tenant_id
+    }
+
+
+# ---------------------------------------------------------------------------
+# Password Reset  (VULNERABLE)
+# ---------------------------------------------------------------------------
+
+class ForgotPasswordRequest(BaseModel):
+    username: str
+
+class ResetPasswordRequest(BaseModel):
+    username: str
+    token: str
+    new_password: str
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    request: ForgotPasswordRequest,
+    db: Session = Depends(database.get_db),
+    x_candidate_id: Optional[str] = Header(None, alias="X-Candidate-ID")
+):
+    """
+    Initiates a password reset for a given username.
+
+    In a real application this would send an email.  Since there is no mail
+    server in this lab the token is returned directly in the JSON response
+    as a "debug" convenience.
+
+    VULNERABILITY: Sensitive Data Exposure
+    The reset token is included in the HTTP response body, allowing any
+    attacker who can make this request to obtain the token for any user and
+    then call /reset-password to take over that account without any email
+    access.  The token is also cryptographically weak (MD5 of username).
+    """
+    user = db.query(models.User).filter(models.User.username == request.username).first()
+
+    # Always return the same generic message so usernames can't be enumerated
+    # (the REAL vuln is the token in the response, not enumeration)
+    generic_msg = "If that username exists a reset token has been generated."
+
+    if not user:
+        # Still return 200 to prevent username enumeration — but no token
+        return {"message": generic_msg}
+
+    # VULNERABILITY: Weak token — MD5 of just the username
+    # A tester who knows this algorithm can generate the token offline without
+    # even calling this endpoint.
+    weak_token = hashlib.md5(request.username.encode()).hexdigest()
+
+    # Invalidate any previous token for this user
+    db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.username == request.username
+    ).delete()
+
+    db_token = models.PasswordResetToken(username=request.username, token=weak_token)
+    db.add(db_token)
+    db.commit()
+
+    # VULNERABILITY: Token returned in plaintext response — no email required!
+    return {
+        "message": generic_msg,
+        # "dev_note" makes it look like an accidental debug artifact
+        "dev_note": "[DEV MODE] Token delivery bypassed. Token: " + weak_token,
+    }
+
+
+@router.post("/reset-password")
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: Session = Depends(database.get_db),
+    x_candidate_id: Optional[str] = Header(None, alias="X-Candidate-ID")
+):
+    """
+    Completes a password reset using a token obtained from /forgot-password.
+
+    Detection: if someone resets the 'admin' account's password the
+    pwd-reset-token-leak vulnerability is marked as found.
+    """
+    reset_record = db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.username == request.username,
+        models.PasswordResetToken.token == request.token,
+        models.PasswordResetToken.used == False,  # noqa: E712
+    ).first()
+
+    if not reset_record:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token.")
+
+    user = db.query(models.User).filter(models.User.username == request.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    # DETECTION: Award points when the admin account is successfully compromised
+    if request.username == "admin" and x_candidate_id:
+        await vulns.award_points(x_candidate_id, "pwd-reset-token-leak", db)
+
+    user.hashed_password = auth.get_password_hash(request.new_password)
+    reset_record.used = True
+    db.commit()
+
+    return {"message": "Password reset successfully."}
+
+
+# ---------------------------------------------------------------------------
+# Open Redirect  (VULNERABLE)
+# ---------------------------------------------------------------------------
+
+@router.get("/redirect")
+async def post_login_redirect(
+    next: Optional[str] = None,
+    candidate_id: Optional[str] = None,
+    x_candidate_id: Optional[str] = Header(None, alias="X-Candidate-ID"),
+    db: Session = Depends(database.get_db)
+):
+    """
+    Returns the URL the frontend should navigate to after login.
+    Accepts an arbitrary ?next= URL with no validation.
+
+    VULNERABILITY: Open Redirect
+    The `next` parameter is not validated against an allowlist.  An attacker
+    who crafts a login URL such as:
+      /login?next=https://evil.com
+    will silently redirect the victim after they authenticate, enabling
+    credential phishing or session-token theft.
+    """
+    safe_default = "/dashboard"
+    redirect_target = next if next else safe_default
+
+    # Accept candidate ID from either header OR query param
+    # (query param needed because this is called from window.location flow)
+    cid = x_candidate_id or candidate_id
+
+    # DETECTION: external URL supplied as next
+    is_external = (
+        redirect_target.startswith("http://") or
+        redirect_target.startswith("https://")
+    ) and "localhost" not in redirect_target and "127.0.0.1" not in redirect_target
+
+    if is_external and cid:
+        await vulns.award_points(cid, "open-redirect-login", db)
+
+    # Return JSON so the frontend can use api.fetch() and include auth headers
+    # The frontend then does window.location.href = data.redirect_to
+    # This keeps the X-Candidate-ID flow working while still being exploitable
+    return {"redirect_to": redirect_target}

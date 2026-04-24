@@ -42,6 +42,7 @@ export default function DashboardLayout({
           <Link href="/dashboard/invoices" className="block px-4 py-2 rounded hover:bg-gray-700">Invoices</Link>
           <Link href="/dashboard/notes" className="block px-4 py-2 rounded hover:bg-gray-700">Notes</Link>
           <Link href="/dashboard/profile" className="block px-4 py-2 rounded hover:bg-gray-700">Profile</Link>
+          <Link href="/dashboard/network" className="block px-4 py-2 rounded hover:bg-gray-700">Network Tools</Link>
           <div className="border-t border-gray-700 my-2 pt-2">
             <Link href="/dashboard/scoreboard" className="block px-4 py-2 rounded hover:bg-gray-700 text-green-400 font-medium">🏆 Scoreboard</Link>
           </div>

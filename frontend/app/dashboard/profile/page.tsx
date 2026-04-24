@@ -1,5 +1,5 @@
 "use client";
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 
 export default function ProfilePage() {
@@ -8,6 +8,83 @@ export default function ProfilePage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [debugInfo, setDebugInfo] = useState<any>(null);
+
+    // Profile update state
+    const [newUsername, setNewUsername] = useState("");
+    const [profileMsg, setProfileMsg] = useState("");
+    const [profileError, setProfileError] = useState("");
+    const [profileLoading, setProfileLoading] = useState(false);
+
+    // Display name state
+    const [displayName, setDisplayName] = useState("");
+    const [newDisplayName, setNewDisplayName] = useState("");
+    const [displayNameMsg, setDisplayNameMsg] = useState("");
+    const [displayNameError, setDisplayNameError] = useState("");
+    const [displayNameLoading, setDisplayNameLoading] = useState(false);
+
+    // Fetch current display name on mount
+    useEffect(() => {
+        api.fetch('/account/display-name')
+            .then(r => r.json())
+            .then(d => { if (d.display_name) setDisplayName(d.display_name); })
+            .catch(() => {});
+    }, []);
+
+    const handleUpdateDisplayName = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setDisplayNameLoading(true);
+        setDisplayNameMsg("");
+        setDisplayNameError("");
+        try {
+            // NOTE: This endpoint uses legacy cookie-based session auth.
+            // The Authorization header is sent here by api.fetch(), but the
+            // server does NOT require it — the session cookie alone is enough.
+            const res = await api.fetch('/account/update-display-name', {
+                method: 'POST',
+                body: JSON.stringify({ display_name: newDisplayName }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setDisplayName(data.display_name);
+                setDisplayNameMsg(`Display name updated to "${data.display_name}"`);
+                setNewDisplayName("");
+            } else {
+                setDisplayNameError('Update failed.');
+            }
+        } catch {
+            setDisplayNameError('Request failed.');
+        } finally {
+            setDisplayNameLoading(false);
+        }
+    };
+
+    const handleUpdateProfile = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setProfileLoading(true);
+        setProfileMsg("");
+        setProfileError("");
+        try {
+            // VULNERABILITY: This PUT endpoint accepts ANY JSON field,
+            // including 'role'. The UI only surfaces 'username', but
+            // an attacker intercepting the request can add {"role": "admin"}
+            // and escalate their own privileges.
+            const res = await api.fetch('/auth/me', {
+                method: 'PUT',
+                body: JSON.stringify({ username: newUsername })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setProfileMsg(`Profile updated! Role: ${data.role}`);
+            } else {
+                const err = await res.json();
+                setProfileError(err.detail || 'Update failed');
+            }
+        } catch (e) {
+            setProfileError('Request failed');
+        } finally {
+            setProfileLoading(false);
+        }
+    };
 
     const handleFetchAvatar = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -191,6 +268,101 @@ export default function ProfilePage() {
                                 {debugInfo.data}
                             </pre>
                         </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Display Name Section — backed by the CSRF-vulnerable endpoint */}
+            <div className="bg-gray-800 p-8 rounded-lg shadow max-w-2xl mt-8">
+                <h2 className="text-xl font-bold mb-1">Display Name</h2>
+                <p className="text-gray-400 mb-1 text-sm">
+                    This is the name shown to other users across the platform.
+                </p>
+                <p className="text-xs text-yellow-500/80 mb-4">
+                    ⚠️ Uses legacy session-based authentication for cross-platform compatibility.
+                </p>
+
+                {displayName && (
+                    <div className="mb-4 px-4 py-2 bg-gray-700 rounded text-sm">
+                        Current display name:{" "}
+                        <span className="font-mono text-blue-300">{displayName}</span>
+                    </div>
+                )}
+
+                <form onSubmit={handleUpdateDisplayName} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium mb-1" htmlFor="display-name-input">
+                            New Display Name
+                        </label>
+                        <input
+                            id="display-name-input"
+                            type="text"
+                            className="w-full p-3 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none"
+                            placeholder="Enter display name"
+                            value={newDisplayName}
+                            onChange={(e) => setNewDisplayName(e.target.value)}
+                            required
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={displayNameLoading}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded disabled:opacity-50"
+                    >
+                        {displayNameLoading ? 'Saving...' : 'Update Display Name'}
+                    </button>
+                </form>
+
+                {displayNameMsg && (
+                    <div className="mt-4 bg-green-500/20 border border-green-500 text-green-200 p-3 rounded text-sm">
+                        {displayNameMsg}
+                    </div>
+                )}
+                {displayNameError && (
+                    <div className="mt-4 bg-red-500/20 border border-red-500 text-red-200 p-3 rounded text-sm">
+                        {displayNameError}
+                    </div>
+                )}
+            </div>
+
+            {/* Profile Update Section */}
+            <div className="bg-gray-800 p-8 rounded-lg shadow max-w-2xl mt-8">
+                <h2 className="text-xl font-bold mb-2">Account Settings</h2>
+                <p className="text-gray-400 mb-4 text-sm">
+                    Update your account details below.
+                </p>
+                <form onSubmit={handleUpdateProfile} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium mb-1" htmlFor="new-username">
+                            New Username
+                        </label>
+                        <input
+                            id="new-username"
+                            type="text"
+                            className="w-full p-3 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none"
+                            placeholder="Enter new username"
+                            value={newUsername}
+                            onChange={(e) => setNewUsername(e.target.value)}
+                            required
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={profileLoading}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded disabled:opacity-50"
+                    >
+                        {profileLoading ? 'Saving...' : 'Save Changes'}
+                    </button>
+                </form>
+
+                {profileMsg && (
+                    <div className="mt-4 bg-green-500/20 border border-green-500 text-green-200 p-3 rounded">
+                        {profileMsg}
+                    </div>
+                )}
+                {profileError && (
+                    <div className="mt-4 bg-red-500/20 border border-red-500 text-red-200 p-3 rounded">
+                        {profileError}
                     </div>
                 )}
             </div>

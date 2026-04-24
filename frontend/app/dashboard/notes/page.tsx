@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
 
 interface Note {
@@ -9,15 +10,81 @@ interface Note {
     is_secret: boolean;
 }
 
+interface SearchResult {
+    id: number;
+    title: string;
+    content: string;
+}
+
+interface SearchResponse {
+    search_term: string;
+    count: number;
+    results: SearchResult[];
+}
+
 export default function NotesPage() {
+    return (
+        <Suspense fallback={<div className="text-gray-400">Loading notes...</div>}>
+            <NotesPageInner />
+        </Suspense>
+    );
+}
+
+function NotesPageInner() {
     const [notes, setNotes] = useState<Note[]>([]);
     const [title, setTitle] = useState("");
     const [content, setContent] = useState("");
     const [isSecret, setIsSecret] = useState(false);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
+    const [isSearching, setIsSearching] = useState(false);
+    const searchParams = useSearchParams();
+    const router = useRouter();
 
     useEffect(() => {
         fetchNotes();
+        // DOM-Based XSS sink: read ?q= from URL and trigger search on load
+        // This allows an attacker to craft a malicious link like:
+        //   /dashboard/notes?q=<img src=x onerror=alert(document.cookie)>
+        const q = searchParams.get('q');
+        if (q) {
+            setSearchQuery(q);
+            performSearch(q);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    const performSearch = async (query: string) => {
+        if (!query.trim()) {
+            setSearchResponse(null);
+            return;
+        }
+        setIsSearching(true);
+        try {
+            const res = await api.fetch(`/misc/search?q=${encodeURIComponent(query)}`);
+            if (res.ok) {
+                const data = await res.json();
+                setSearchResponse(data);
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    const handleSearch = (e: React.FormEvent) => {
+        e.preventDefault();
+        // Update the URL so the link is shareable (and exploitable)
+        router.push(`/dashboard/notes?q=${encodeURIComponent(searchQuery)}`);
+        performSearch(searchQuery);
+    };
+
+    const handleClearSearch = () => {
+        setSearchQuery("");
+        setSearchResponse(null);
+        router.push('/dashboard/notes');
+    };
 
     const fetchNotes = async () => {
         try {
@@ -64,10 +131,67 @@ export default function NotesPage() {
             console.error(e);
         }
     };
-
     return (
         <div>
             <h1 className="text-3xl font-bold mb-6">Notes</h1>
+
+            {/* Search Bar */}
+            <div className="bg-gray-800 p-4 rounded-lg shadow mb-6">
+                <form onSubmit={handleSearch} className="flex gap-2">
+                    <input
+                        type="text"
+                        className="flex-1 p-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 focus:outline-none text-gray-200"
+                        placeholder="Search notes..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    <button
+                        type="submit"
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+                    >
+                        {isSearching ? 'Searching...' : 'Search'}
+                    </button>
+                    {searchResponse && (
+                        <button
+                            type="button"
+                            onClick={handleClearSearch}
+                            className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded"
+                        >
+                            Clear
+                        </button>
+                    )}
+                </form>
+
+                {/* VULNERABILITY: DOM-Based XSS */}
+                {/* search_term comes from the server, which echoes the raw ?q= URL param */}
+                {/* Rendering it with dangerouslySetInnerHTML turns it into an XSS sink */}
+                {/* Craft: /dashboard/notes?q=<img src=x onerror=alert(1)> to exploit */}
+                {searchResponse && (
+                    <div className="mt-3 text-sm text-gray-400">
+                        Showing {searchResponse.count} result(s) for:&nbsp;
+                        <span
+                            className="text-blue-300 font-mono"
+                            dangerouslySetInnerHTML={{ __html: searchResponse.search_term }}
+                        />
+                    </div>
+                )}
+
+                {/* Search Results */}
+                {searchResponse && searchResponse.results.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                        {searchResponse.results.map(r => (
+                            <div key={r.id} className="bg-gray-700 p-3 rounded border border-gray-600">
+                                <p className="font-bold text-white">{r.title}</p>
+                                <p className="text-gray-400 text-sm mt-1">{r.content}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {searchResponse && searchResponse.results.length === 0 && (
+                    <p className="mt-3 text-gray-500 text-sm">No notes matched your search.</p>
+                )}
+            </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Create Note */}

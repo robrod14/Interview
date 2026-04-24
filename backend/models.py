@@ -27,6 +27,7 @@ class User(Base):
     role = Column(String, default="user") # 'admin' or 'user'
     tenant_id = Column(Integer, ForeignKey("tenants.id"))
     api_key = Column(String, nullable=True)
+    display_name = Column(String, nullable=True)  # Used by CSRF demo endpoint
 
     tenant = relationship("Tenant", back_populates="users")
     projects = relationship("Project", back_populates="owner")
@@ -68,6 +69,18 @@ class Note(Base):
 
     author = relationship("User", back_populates="notes")
     tenant = relationship("Tenant", back_populates="notes")
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, ForeignKey("users.username"), index=True)
+    token = Column(String, unique=True, index=True)
+    created_at = Column(DateTime, default=func.now())
+    used = Column(Boolean, default=False)
+
+    user = relationship("User", foreign_keys=[username])
+
 
 # Scoring System Models
 

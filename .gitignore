@@ -1,0 +1,15 @@
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local DB
+*.db
+
+# Next.js / Node
+frontend/.next/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+
+# macOS
+.DS_Store

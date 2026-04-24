@@ -61,6 +61,60 @@ VULNERABILITIES = [
         "points": 250,
         "severity": "High",
         "description": "Server-side Request Forgery via avatar URL fetcher."
+    },
+    {
+        "id": "dom-xss-search",
+        "name": "DOM-Based XSS (Notes Search)",
+        "category": "XSS",
+        "difficulty": "Hard",
+        "points": 300,
+        "severity": "High",
+        "description": "Inject a payload via the ?q= URL parameter which is rendered unsafely into the DOM without sanitisation."
+    },
+    {
+        "id": "mass-assignment-role",
+        "name": "Mass Assignment (Privilege Escalation)",
+        "category": "Broken Access Control",
+        "difficulty": "Medium",
+        "points": 200,
+        "severity": "Critical",
+        "description": "The profile update endpoint blindly applies all JSON fields, allowing a user to escalate their own role to admin."
+    },
+    {
+        "id": "pwd-reset-token-leak",
+        "name": "Password Reset Token Exposure",
+        "category": "Sensitive Data Exposure",
+        "difficulty": "Medium",
+        "points": 200,
+        "severity": "High",
+        "description": "The forgot-password API returns the reset token directly in the JSON response, allowing an attacker to reset any user's password without email access."
+    },
+    {
+        "id": "cmd-injection-ping",
+        "name": "Command Injection (Network Ping)",
+        "category": "Injection",
+        "difficulty": "Hard",
+        "points": 300,
+        "severity": "Critical",
+        "description": "The ping diagnostic endpoint passes user input directly to a shell command, enabling OS command injection."
+    },
+    {
+        "id": "open-redirect-login",
+        "name": "Open Redirect (Post-Login)",
+        "category": "Broken Access Control",
+        "difficulty": "Easy",
+        "points": 125,
+        "severity": "Medium",
+        "description": "The post-login redirect endpoint accepts an arbitrary ?next= URL without validation, enabling phishing redirects."
+    },
+    {
+        "id": "csrf-display-name",
+        "name": "CSRF (Display Name Update)",
+        "category": "Cross-Site Request Forgery",
+        "difficulty": "Hard",
+        "points": 250,
+        "severity": "High",
+        "description": "The display-name update endpoint authenticates via a session cookie with no CSRF token validation. A malicious page on any same-site origin can silently change the victim's display name."
     }
 ]
 
