@@ -323,3 +323,8 @@ Points are awarded when **all** of the following are true on a call to `POST /ap
 ## Reset
 - Run `python3 -m backend.seed` to wipe the DB and re-seed.
 - Use the admin "Reset Lab" button (if implemented in UI) or endpoint `/api/admin/reset-lab`.
+
+## Troubleshooting
+- If you visit "/" and it redirects you to "/login" you have a session id already
+  - View by going to Inspect > Console and typing ```localStorage.getItem('candidate_session_id')```
+- To remove this type ```localStorage.removeItem('candidate_session_id')``` follwed by ```localStorage.removeItem('candidate_name')``` and ```location.assign('/')```
